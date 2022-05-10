@@ -1,32 +1,67 @@
 package main
 
 import (
-	"context"
+	"bufio"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/joho/godotenv"
-	"io/ioutil"
+	"os"
 	"strings"
 )
 
 func main() {
+
 	// Load aws env vars
-	godotenv.Load(".env")
+	err := godotenv.Load(".env")
+	if err != nil {
+		return
+	}
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
-	//config := config2.EnvConfig{
-	//	Credentials: aws.Credentials{
-	//		AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-	//		SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-	//		SessionToken:    os.Getenv("AWS_SESSION_TOKEN"),
-	//	},
-	//	Region: "us-west-2",
-	//}
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String("us-west-2"),
+		Credentials: credentials.NewStaticCredentials(accessKey, secretKey, "")},
+	)
 
-	client := ssm.NewFromConfig(aws.Config{})
-	file, _ := ioutil.ReadFile(".secure.env")
-	for _, secret := range strings.Split(string(file), "\n") {
-		fmt.Println("Some secret ", secret)
-		parameter, err := client.PutParameter(context.TODO(), {})
+	file, err := os.Open(".secure.env")
+	if err != nil {
+		panic(err)
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(file)
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) > 0 {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				// add key/value to ssm
+				key := parts[0]
+				value := parts[1]
+				fmt.Println(key, value)
+				svc := ssm.New(sess, aws.NewConfig().WithLogLevel(aws.LogDebugWithHTTPBody))
+				_, err := svc.PutParameter(&ssm.PutParameterInput{
+					Name:      aws.String(key),
+					Value:     aws.String(value),
+					Type:      aws.String("SecureString"),
+					Overwrite: aws.Bool(true),
+				})
+				if err != nil {
+					fmt.Println(err)
+
+				}
+			}
+
+		}
+
 	}
 }
